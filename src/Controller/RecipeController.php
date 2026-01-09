@@ -190,4 +190,28 @@ class RecipeController extends AbstractController
         // 3. Devolvemos la respuesta JSON
         return $this->json($data);
     }
+
+    #[Route('/{id}', name: 'delete_recipe', methods: ['DELETE'])]
+    public function deleteRecipe(int $id): JsonResponse
+    {
+        // 1. Buscar la receta por ID
+        $recipe = $this->recipeRepository->find($id);
+
+        // 2. Validar si existe
+        if (!$recipe) {
+            // El enunciado pide dar el error correspondiente si no existe
+            return $this->json(['error' => 'La receta con ID ' . $id . ' no existe.'], 404);
+        }
+
+        // 3. Borrado Lógico (Cambiar flag a true)
+        // No usamos $entityManager->remove($recipe) porque eso borraría la fila de la BBDD.
+        $recipe->setDeleted(true);
+
+        // 4. Guardar cambios
+        // Al modificar una entidad que ya existe, solo hace falta flush()
+        $this->entityManager->flush();
+
+        // 5. Devolver respuesta
+        return $this->json(['message' => 'La receta se ha eliminado correctamente (Borrado Lógico)']);
+    }
 }
