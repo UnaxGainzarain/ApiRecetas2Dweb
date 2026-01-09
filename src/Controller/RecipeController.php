@@ -218,27 +218,25 @@ class RecipeController extends AbstractController
         return $this->json(['message' => 'La receta se ha eliminado correctamente (Borrado Lógico)']);
     }
 
-    #[Route('/{id}/rating', name: 'rate_recipe', methods: ['POST'], format: 'json')]
-    public function voteRecipe(
-        string $id, 
-        #[MapRequestPayload] RatingNewDTO $ratingDto,
-        Request $request
-    ): JsonResponse
+    #[Route('/{id}/rating/{score}', name: 'rate_recipe', methods: ['POST'], format: 'json')]
+    public function voteRecipe(string $id, string $score, Request $request): JsonResponse
     {
         $recipeId = (int) $id;
+        $ratingScore = (int) $score;
 
-        // 1. Buscar la receta
+        // 1. Validar rango (0-5) según YAML
+        if ($ratingScore < 0 || $ratingScore > 5) {
+            return $this->json(['error' => 'La puntuación debe estar entre 0 y 5'], 400);
+        }
+
+        // 2. Buscar la receta
         $recipe = $this->recipeRepository->find($recipeId);
         if (!$recipe) {
             return $this->json(['error' => 'La receta no existe'], 404);
         }
 
-        // 2. Obtener la IP del cliente
+        // 3. Validar IP duplicada
         $clientIp = $request->getClientIp();
-        // Nota: En local a veces sale "::1" (que es localhost en IPv6), es normal.
-
-        // 3. Validar si esta IP ya ha votado esta receta
-        // Usamos el EntityManager para acceder al repositorio de Rating sin inyectarlo en el constructor
         $existingRating = $this->entityManager->getRepository(Rating::class)->findOneBy([
             'recipe' => $recipe,
             'ip' => $clientIp
@@ -248,20 +246,85 @@ class RecipeController extends AbstractController
             return $this->json(['error' => 'Esta IP ya ha votado a esta receta'], 400);
         }
 
-        // 4. Crear el voto
+        // 4. Guardar el voto
         $rating = new Rating();
-        $rating->setScore($ratingDto->score);
+        $rating->setScore($ratingScore);
         $rating->setIp($clientIp);
         $rating->setRecipe($recipe);
 
-        // 5. Guardar
         $this->entityManager->persist($rating);
         $this->entityManager->flush();
 
-        return $this->json([
-            'message' => 'Voto registrado correctamente',
-            'score' => $rating->getScore(),
-            'recipe_id' => $recipe->getId()
-        ]);
+        // 5. Devolver la Receta Completa (Requerimiento del YAML)
+        // Usamos una función auxiliar para formatear la salida igual que en el GET
+        return $this->json($this->formatRecipe($recipe));
+    }
+
+    /**
+     * Función auxiliar para dar formato a la receta según el YAML
+     * Esto evita repetir código en el GET y en el Rating
+     */
+    private function formatRecipe(Recipe $recipe): array
+    {
+        // Ingredientes
+        $ingredientsData = [];
+        foreach ($recipe->getIngredients() as $ing) {
+            $ingredientsData[] = [
+                'name' => $ing->getName(),
+                'quantity' => $ing->getQuantitiy(),
+                'unit' => $ing->getUnit()
+            ];
+        }
+
+        // Pasos
+        $stepsData = [];
+        foreach ($recipe->getSteps() as $step) {
+            $stepsData[] = [
+                'order' => $step->getSterOrder(),
+                'description' => $step->getDescription()
+            ];
+        }
+
+        // Nutrientes
+        $nutrientsData = [];
+        foreach ($recipe->getRecipeNutrients() as $recNut) {
+            $nutrientsData[] = [
+                'id' => $recNut->getId(),
+                'quantity' => $recNut->getQuantity(),
+                'type' => [
+                    'id' => $recNut->getNutrientType()->getId(),
+                    'name' => $recNut->getNutrientType()->getName(),
+                    'unit' => $recNut->getNutrientType()->getUnit(),
+                ]
+            ];
+        }
+
+        // Valoraciones (Calculamos la media)
+        $ratings = $recipe->getRatings();
+        $avg = 0;
+        $count = count($ratings);
+        if ($count > 0) {
+            $sum = 0;
+            foreach ($ratings as $r) { $sum += $r->getScore(); }
+            $avg = $sum / $count;
+        }
+
+        return [
+            'id' => $recipe->getId(),
+            'title' => $recipe->getTitle(),
+            'number-diner' => $recipe->getNumberDiners(),
+            'type' => [
+                'id' => $recipe->getType()->getId(),
+                'name' => $recipe->getType()->getName(),
+                'description' => $recipe->getType()->getDescription(),
+            ],
+            'ingredients' => $ingredientsData,
+            'steps' => $stepsData,
+            'nutrients' => $nutrientsData,
+            'rating' => [
+                'number-votes' => $count,
+                'rating-avg' => round($avg, 2) // Redondeamos a 2 decimales
+            ]
+        ];
     }
 }
