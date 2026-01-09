@@ -13,9 +13,12 @@ use App\Repository\RecipeTypeRepository;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
-use Symfony\Component\HttpKernel\Attribute\MapRequestPayload; // ¡Importante para el DTO!
+use Symfony\Component\HttpKernel\Attribute\MapRequestPayload;
 use Symfony\Component\Routing\Attribute\Route;
 use Symfony\Component\HttpKernel\Attribute\MapQueryParameter;
+use App\Entity\Rating; 
+use App\Model\RatingNewDTO; 
+use Symfony\Component\HttpFoundation\Request; 
 
 
 #[Route('/recipes')]
@@ -213,5 +216,52 @@ class RecipeController extends AbstractController
 
         // 5. Devolver respuesta
         return $this->json(['message' => 'La receta se ha eliminado correctamente (Borrado Lógico)']);
+    }
+
+    #[Route('/{id}/rating', name: 'rate_recipe', methods: ['POST'], format: 'json')]
+    public function voteRecipe(
+        string $id, 
+        #[MapRequestPayload] RatingNewDTO $ratingDto,
+        Request $request
+    ): JsonResponse
+    {
+        $recipeId = (int) $id;
+
+        // 1. Buscar la receta
+        $recipe = $this->recipeRepository->find($recipeId);
+        if (!$recipe) {
+            return $this->json(['error' => 'La receta no existe'], 404);
+        }
+
+        // 2. Obtener la IP del cliente
+        $clientIp = $request->getClientIp();
+        // Nota: En local a veces sale "::1" (que es localhost en IPv6), es normal.
+
+        // 3. Validar si esta IP ya ha votado esta receta
+        // Usamos el EntityManager para acceder al repositorio de Rating sin inyectarlo en el constructor
+        $existingRating = $this->entityManager->getRepository(Rating::class)->findOneBy([
+            'recipe' => $recipe,
+            'ip' => $clientIp
+        ]);
+
+        if ($existingRating) {
+            return $this->json(['error' => 'Esta IP ya ha votado a esta receta'], 400);
+        }
+
+        // 4. Crear el voto
+        $rating = new Rating();
+        $rating->setScore($ratingDto->score);
+        $rating->setIp($clientIp);
+        $rating->setRecipe($recipe);
+
+        // 5. Guardar
+        $this->entityManager->persist($rating);
+        $this->entityManager->flush();
+
+        return $this->json([
+            'message' => 'Voto registrado correctamente',
+            'score' => $rating->getScore(),
+            'recipe_id' => $recipe->getId()
+        ]);
     }
 }
