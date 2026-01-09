@@ -15,6 +15,8 @@ use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpKernel\Attribute\MapRequestPayload; // ¡Importante para el DTO!
 use Symfony\Component\Routing\Attribute\Route;
+use Symfony\Component\HttpKernel\Attribute\MapQueryParameter;
+
 
 #[Route('/recipes')]
 class RecipeController extends AbstractController
@@ -94,5 +96,98 @@ class RecipeController extends AbstractController
             'title' => $recipe->getTitle(),
             'message' => 'Receta creada correctamente'
         ]);
+    }
+
+   
+
+    #[Route('', name: 'get_recipes', methods: ['GET'])]
+    public function searchRecipes(
+        #[MapQueryParameter] ?int $type = null // Captura ?type=... de la URL
+    ): JsonResponse
+    {
+        // 1. Buscamos las recetas en BBDD
+        if ($type) {
+            // Si viene el parámetro 'type', filtramos por ese tipo Y que no estén borradas
+            $recipes = $this->recipeRepository->findBy(['type' => $type, 'deleted' => false]);
+        } else {
+            // Si no viene tipo, traemos todas las que NO estén borradas
+            $recipes = $this->recipeRepository->findBy(['deleted' => false]);
+        }
+
+        // 2. Preparamos los datos para el JSON (Manual para evitar referencias circulares)
+        $data = [];
+
+        foreach ($recipes as $recipe) {
+            
+            // Preparamos ingredientes
+            $ingredientsData = [];
+            foreach ($recipe->getIngredients() as $ing) {
+                $ingredientsData[] = [
+                    'name' => $ing->getName(),
+                    'quantity' => $ing->getQuantitiy(),
+                    'unit' => $ing->getUnit()
+                ];
+            }
+
+            // Preparamos pasos
+            $stepsData = [];
+            foreach ($recipe->getSteps() as $step) {
+                $stepsData[] = [
+                    'order' => $step->getSterOrder(),
+                    'description' => $step->getDescription()
+                ];
+            }
+
+            // Preparamos nutrientes
+            $nutrientsData = [];
+            foreach ($recipe->getRecipeNutrients() as $recNut) {
+                $nutrientsData[] = [
+                    // Ojo: según tu YAML el nutriente devuelve un objeto type y quantity
+                    'id' => $recNut->getId(),
+                    'quantity' => $recNut->getQuantity(),
+                    'type' => [
+                        'id' => $recNut->getNutrientType()->getId(),
+                        'name' => $recNut->getNutrientType()->getName(),
+                        'unit' => $recNut->getNutrientType()->getUnit(),
+                    ]
+                ];
+            }
+
+            // Preparamos valoraciones (calculamos la media al vuelo si quieres, o devolvemos null de momento)
+            // Según el YAML, 'rating' es un objeto con 'number-votes' y 'rating-avg'.
+            // Como esto requiere lógica extra, de momento lo dejaremos vacío o básico.
+            $ratings = $recipe->getRatings();
+            $avg = 0;
+            if (count($ratings) > 0) {
+                $sum = 0;
+                foreach ($ratings as $r) { $sum += $r->getScore(); }
+                $avg = $sum / count($ratings);
+            }
+            
+            $ratingData = [
+                'number-votes' => count($ratings),
+                'rating-avg' => $avg
+            ];
+
+
+            // Montamos el objeto Receta completo
+            $data[] = [
+                'id' => $recipe->getId(),
+                'title' => $recipe->getTitle(),
+                'number-diner' => $recipe->getNumberDiners(),
+                'type' => [
+                    'id' => $recipe->getType()->getId(),
+                    'name' => $recipe->getType()->getName(),
+                    'description' => $recipe->getType()->getDescription(),
+                ],
+                'ingredients' => $ingredientsData,
+                'steps' => $stepsData,
+                'nutrients' => $nutrientsData,
+                'rating' => $ratingData
+            ];
+        }
+
+        // 3. Devolvemos la respuesta JSON
+        return $this->json($data);
     }
 }
