@@ -36,69 +36,62 @@ class RecipeController extends AbstractController
         #[MapRequestPayload] RecipeNewDTO $recipeDto
     ): JsonResponse
     {
+        // --- NUEVA VALIDACIÓN: Mínimo 1 ingrediente y 1 paso ---
+        if (count($recipeDto->ingredients) < 1) {
+            return $this->json(['error' => 'La receta debe tener al menos 1 ingrediente.'], 400);
+        }
+        if (count($recipeDto->steps) < 1) {
+            return $this->json(['error' => 'La receta debe tener al menos 1 paso.'], 400);
+        }
+        // -------------------------------------------------------
+
         // 1. Validar y buscar el Tipo de Receta
         $recipeType = $this->recipeTypeRepository->find($recipeDto->typeId);
         if (!$recipeType) {
             return $this->json(['error' => 'El tipo de receta (ID: ' . $recipeDto->typeId . ') no existe.'], 400);
         }
 
-        // 2. Crear la Entidad Receta (Padre)
+        // ... EL RESTO DEL CÓDIGO SIGUE IGUAL ...
         $recipe = new Recipe();
         $recipe->setTitle($recipeDto->title);
         $recipe->setNumberDiners($recipeDto->numberDiners);
-        $recipe->setDeleted(false); // Por defecto no está borrada
+        $recipe->setDeleted(false);
         $recipe->setType($recipeType);
 
-        // Persistimos la receta para tenerla lista
         $this->entityManager->persist($recipe);
 
-        // 3. Procesar Ingredientes (Relación 1-N)
         foreach ($recipeDto->ingredients as $ingDto) {
             $ingredient = new Ingredient();
             $ingredient->setName($ingDto->name);
             $ingredient->setQuantitiy($ingDto->quantity);
             $ingredient->setUnit($ingDto->unit);
-            $ingredient->setRecipe($recipe); // Relacionamos con el padre
-
+            $ingredient->setRecipe($recipe);
             $this->entityManager->persist($ingredient);
         }
 
-        // 4. Procesar Pasos (Relación 1-N)
         foreach ($recipeDto->steps as $stepDto) {
             $step = new Step();
             $step->setDescription($stepDto->description);
             $step->setSterOrder($stepDto->order);
             $step->setRecipe($recipe);
-
             $this->entityManager->persist($step);
         }
 
-        // 5. Procesar Nutrientes (Relación N-M con atributos -> Tabla Intermedia)
         foreach ($recipeDto->nutrients as $nutDto) {
-            // Buscamos el tipo de nutriente en BBDD
             $nutrientType = $this->nutrientTypeRepository->find($nutDto->typeId);
-            
             if (!$nutrientType) {
                 return $this->json(['error' => 'El tipo de nutriente (ID: ' . $nutDto->typeId . ') no existe.'], 400);
             }
-
             $recipeNutrient = new RecipeNutrient();
             $recipeNutrient->setQuantity($nutDto->quantity);
             $recipeNutrient->setRecipe($recipe);
             $recipeNutrient->setNutrientType($nutrientType);
-
             $this->entityManager->persist($recipeNutrient);
         }
 
-        // 6. Guardar todo en BBDD
         $this->entityManager->flush();
 
-        // 7. Devolver respuesta
-        return $this->json([
-            'id' => $recipe->getId(),
-            'title' => $recipe->getTitle(),
-            'message' => 'Receta creada correctamente'
-        ]);
+        return $this->json($this->formatRecipe($recipe));
     }
 
    
